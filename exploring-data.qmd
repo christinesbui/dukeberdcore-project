@@ -1,0 +1,406 @@
+---
+title: "Exploring the Data"
+author: "Christine Bui"
+format: pdf
+editor: visual
+---
+
+## Exploring the Data
+
+NOTE: These tables aren't perfect/are drafts and were done to brainstorm how to frame our findings.
+
+```{r include=FALSE, echo=FALSE}
+# Loading necessary libraries
+library(haven)
+library(tidyverse)
+library(gt)
+library(scales)
+library(labelled)
+```
+
+```{r}
+# Reading in the data
+data <- read_dta("C:/Users/chris/Downloads/covadj_review_final.dta")
+head(data)
+```
+
+```{r}
+# Create a cleaned version with recoded values
+data_cleaned <- data %>%
+  mutate(
+    # Convert labelled variables to factors with proper labels
+    rzvarsyesno_clean = case_when(
+      rzvarsyesno == 1 ~ "Yes",
+      rzvarsyesno == 0 ~ "No",
+      TRUE ~ "Unclear"
+    ),
+    
+    # Baseline outcome reported
+    baseoutcome_clean = case_when(
+      baseoutcome == 1 ~ "Yes",
+      baseoutcome == 0 ~ "No",
+      TRUE ~ "Unclear"
+    ),
+    
+    # Adjusted for baseline outcome
+    baseoutcomeadj_clean = case_when(
+      baseoutcomeadj == 1 ~ "Yes",
+      baseoutcomeadj == 0 ~ "No",
+      TRUE ~ "Unclear/NA"
+    ),
+    
+    # Any adjusted analysis
+    adjcovar_clean = case_when(
+      adjcovar == 1 ~ "Yes",
+      adjcovar == 0 ~ "No",
+      TRUE ~ "Unclear"
+    ),
+    
+    # Pre-specification of covariates
+    adjprespec_clean = case_when(
+      adjprespec == 1 ~ "Pre-specified a priori",
+      adjprespec == 0 ~ "Post-hoc",
+      adjprespec == -999 ~ "Not reported/Unclear",
+      TRUE ~ "Not reported/Unclear"
+    ),
+    
+    # Journal impact factor category (you'll need to define this based on your data)
+    # For now, I'll create a placeholder - adjust based on your actual journal impact data
+    high_impact = case_when(
+      journal %in% c("The lancet. HIV", "Journal of the American Medical Association", 
+                     "The Lancet", "New England Journal of Medicine", "BMJ") ~ "High impact (IF > 10)",
+      TRUE ~ "Other journals"
+    ),
+    
+    # Number of clusters category
+    cluster_size_category = case_when(
+      numberofclustersrandomized <= 10 ~ "Small (≤10 clusters)",
+      numberofclustersrandomized <= 50 ~ "Medium (11-50 clusters)",
+      numberofclustersrandomized > 50 ~ "Large (>50 clusters)",
+      TRUE ~ "Not reported"
+    )
+  )
+```
+
+```{r}
+# Table 1: Trial Characteristics
+table1 <- data_cleaned %>%
+  summarise(
+    `Total trials` = as.character(n()),
+    `Publication year range` = paste(min(publishedyear, na.rm = TRUE), 
+                                      "-", 
+                                      max(publishedyear, na.rm = TRUE)),
+    `Median publication year` = as.character(median(publishedyear, na.rm = TRUE)),
+    `High impact journals` = as.character(sum(high_impact == "High impact (IF > 10)", na.rm = TRUE)),
+    `High impact journals (%)` = percent(mean(high_impact == "High impact (IF > 10)", na.rm = TRUE), accuracy = 0.1),
+    `Median clusters per trial` = as.character(median(numberofclustersrandomized, na.rm = TRUE)),
+    `Range of clusters` = paste(min(numberofclustersrandomized, na.rm = TRUE), 
+                                "-", 
+                                max(numberofclustersrandomized, na.rm = TRUE)),
+    `Trials with primary outcome identified` = as.character(sum(primaryoutcomeident == 1, na.rm = TRUE)),
+    `Trials with primary outcome identified (%)` = percent(mean(primaryoutcomeident == 1, na.rm = TRUE), accuracy = 0.1)
+  ) %>%
+  pivot_longer(everything(), names_to = "Characteristic", values_to = "Value")
+
+# Create gt table
+table1_gt <- table1 %>%
+  gt() %>%
+  tab_header(
+    title = "Table 1. Characteristics of Included Cluster Randomized Trials",
+    subtitle = paste("N =", nrow(data_cleaned), "trials")
+  ) %>%
+  cols_label(
+    Characteristic = "Characteristic",
+    Value = "Value"
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(everything())
+  ) %>%
+  tab_options(
+    table.font.size = "small",
+    heading.title.font.size = "medium",
+    heading.subtitle.font.size = "small"
+  )
+
+# Print table
+table1_gt
+```
+
+Why this table matters for covariate adjustment: (1) publication year range shows whether we're capturing recent practice, (2) journal impact factor could matter a lot (maybe high impact journals are more reliable), (3) primary outcome identification matters because we need to know if trials clearly specified outcomes to assess whether adjustment was pre-specified.
+
+It answers a question: is our sample representative, and do characteristics that might influence covariate handling across trials?
+
+```{r warning=FALSE}
+# Table 2: Use of covariates in randomization
+# Create denominator for location and size
+trials_with_location <- data_cleaned %>%
+  filter(!is.na(q4selectcountryorcountriesinwhi) & q4selectcountryorcountriesinwhi != "")
+
+trials_with_variable_size <- data_cleaned %>%
+  filter(!is.na(numberofclustersrandomized) & numberofclustersrandomized != 999)
+
+# Create the table data
+table2_data <- data.frame(
+  review_item = c(
+    "Any covariate used in randomization",
+    "Type of covariate used (excluding location and size):",
+    "  - Cluster-level only",
+    "  - Individual-level only",
+    "  - Both cluster- and individual-level",
+    "  - None",
+    "  - Unclear",
+    "Covariates used in randomization:",
+    "  - Cluster location",
+    "  - Cluster size",
+    "Number of covariates used (when any used):",
+    "  - 1 covariate",
+    "  - 2 covariates",
+    "  - 3 or more covariates"
+  ),
+  
+  n = c(
+    sum(data_cleaned$rzvarsyesno == 1, na.rm = TRUE),
+    NA,
+    sum(data_cleaned$adjcovartype___1 == 1 & 
+          (data_cleaned$adjcovartype___2 != 1 | is.na(data_cleaned$adjcovartype___2)), 
+        na.rm = TRUE),
+    sum(data_cleaned$adjcovartype___2 == 1 & 
+          (data_cleaned$adjcovartype___1 != 1 | is.na(data_cleaned$adjcovartype___1)), 
+        na.rm = TRUE),
+    sum(data_cleaned$adjcovartype___1 == 1 & data_cleaned$adjcovartype___2 == 1, 
+        na.rm = TRUE),
+    sum(data_cleaned$rzvarsyesno == 0, na.rm = TRUE),
+    sum(is.na(data_cleaned$rzvarsyesno) | data_cleaned$rzvarsyesno == -999, na.rm = TRUE),
+    NA,
+    sum(str_detect(data_cleaned$rzvariables, "location"), na.rm = TRUE),
+    sum(str_detect(data_cleaned$rzvariables, "size"), na.rm = TRUE),
+    NA,
+    sum(data_cleaned$rzvarsyesno == 1 & data_cleaned$rzvarsnum == 1, na.rm = TRUE),
+    sum(data_cleaned$rzvarsyesno == 1 & data_cleaned$rzvarsnum == 2, na.rm = TRUE),
+    sum(data_cleaned$rzvarsyesno == 1 & data_cleaned$rzvarsnum >= 3, na.rm = TRUE)
+  ),
+  
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    N = case_when(
+      review_item == "Any covariate used in randomization" ~ nrow(data_cleaned),
+      review_item %in% c("  - Cluster-level only", "  - Individual-level only", 
+                         "  - Both cluster- and individual-level", "  - None", "  - Unclear") ~ nrow(data_cleaned),
+      review_item == "  - Cluster location" ~ nrow(trials_with_location),
+      review_item == "  - Cluster size" ~ nrow(trials_with_variable_size),
+      review_item %in% c("  - 1 covariate", "  - 2 covariates", "  - 3 or more covariates") ~ 
+        sum(data_cleaned$rzvarsyesno == 1, na.rm = TRUE),
+      TRUE ~ NA_real_
+    ),
+    `%` = if_else(is.na(N) | is.na(n), "", sprintf("%.1f%%", (n / N) * 100)),
+    `n/N` = if_else(is.na(N) | is.na(n), "", paste0(n, "/", N))
+  ) %>%
+  select(review_item, `n/N`, `%`)
+
+# Create gt table
+table2_gt <- table2_data %>%
+  gt() %>%
+  tab_header(
+    title = "Table 2. Use of Covariates in Randomization",
+    subtitle = paste("Based on", nrow(data_cleaned), "cluster randomized trials")
+  ) %>%
+  cols_label(
+    review_item = "Review item",
+    `n/N` = "n/N",
+    `%` = "%"
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(everything())
+  ) %>%
+  tab_style(
+    style = cell_text(style = "italic"),
+    locations = cells_body(rows = c(2, 8, 11))
+  ) %>%
+  tab_options(
+    table.font.size = "small",
+    heading.title.font.size = "medium"
+  )
+
+table2_gt
+```
+
+This table assesses whether researchers are using restricted randomization to promote baseline balance. It highlights type of covariates used, fundamental cluster characteristics (location and size), and number of covariates.
+
+```{r}
+# Table 3: Reporting of baseline covariates
+# Create the summary data using existing cleaned variables
+table3_data <- data.frame(
+  review_item = c(
+    "Baseline table includes:",
+    "  - Cluster-level covariates only",
+    "  - Individual-level covariates only",
+    "  - Both cluster- and individual-level",
+    "  - No table",
+    "Baseline measure of primary outcome reported",
+    "Significance test of balance reported"
+  ),
+  
+  n = c(
+    NA,  # Section header
+    sum(data_cleaned$covreportedarm___1 == 1 & 
+          (data_cleaned$covreportedarm___2 != 1 | is.na(data_cleaned$covreportedarm___2)), 
+        na.rm = TRUE),
+    sum(data_cleaned$covreportedarm___2 == 1 & 
+          (data_cleaned$covreportedarm___1 != 1 | is.na(data_cleaned$covreportedarm___1)), 
+        na.rm = TRUE),
+    sum(data_cleaned$covreportedarm___1 == 1 & data_cleaned$covreportedarm___2 == 1, 
+        na.rm = TRUE),
+    sum(is.na(data_cleaned$covreported) | data_cleaned$covreported == 0, 
+        na.rm = TRUE),
+    sum(data_cleaned$baseoutcome_clean == "Yes", na.rm = TRUE),
+    sum(data_cleaned$baseoutcomenowhy___555 == 555, na.rm = TRUE)
+  ),
+  
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    N = case_when(
+      review_item %in% c("Baseline table includes:", "  - Cluster-level covariates only",
+                          "  - Individual-level covariates only", "  - Both cluster- and individual-level",
+                          "  - No table") ~ nrow(data_cleaned),
+      review_item == "Baseline measure of primary outcome reported" ~ nrow(data_cleaned),
+      review_item == "Significance test of balance reported" ~ nrow(data_cleaned),
+      TRUE ~ NA_real_
+    ),
+    `%` = if_else(is.na(N) | is.na(n), "", sprintf("%.1f%%", (n / N) * 100)),
+    `n/N` = if_else(is.na(N) | is.na(n), "", paste0(n, "/", N))
+  ) %>%
+  select(review_item, `n/N`, `%`) 
+
+# Create gt table
+table3_gt <- table3_data %>%
+  gt() %>%
+  tab_header(
+    title = "Table 3. Reporting of Baseline Covariates",
+    subtitle = paste("Based on", nrow(data_cleaned), "cluster randomized trials")
+  ) %>%
+  cols_label(
+    review_item = "Review item",
+    `n/N` = "n/N",
+    `%` = "%"
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(everything())
+  ) %>%
+  tab_style(
+    style = cell_text(style = "italic"),
+    locations = cells_body(rows = 1)
+  ) %>%
+  tab_options(
+    table.font.size = "small",
+    heading.title.font.size = "medium"
+  )
+
+# Display the table
+table3_gt
+```
+
+This table evaluates transparency in reporting what was actually balanced or imbalanced. It answers the question: are trials transparent about baseline comparability?
+
+```{r}
+# Table 4: Covariate adjustment in analysis
+# Create denominators
+trials_with_baseoutcome <- data_cleaned %>% filter(baseoutcome == 1)
+trials_with_rzvars <- data_cleaned %>% filter(rzvarsyesno == 1)
+trials_with_adj <- data_cleaned %>% filter(adjcovar == 1)
+
+# Create the summary data
+table4_data <- data.frame(
+  review_item = c(
+    "Trial report includes an adjusted analysis",
+    "",
+    "Adjusted for baseline measure of outcome:",
+    "  - Among trials reporting baseline outcome",
+    "Adjusted for all covariates used in randomization:",
+    "  - Among trials using covariates in randomization",
+    "Timing of covariate selection:",
+    "  - Pre-specified a priori",
+    "  - Post-hoc",
+    "  - Unclear/not reported",
+    "Level of covariates in adjusted analysis:",
+    "  - Cluster-level only",
+    "  - Individual-level only",
+    "  - Both cluster- and individual-level",
+    "  - Unclear"
+  ),
+  
+  n = c(
+    sum(data_cleaned$adjcovar == 1, na.rm = TRUE),
+    NA,
+    NA,
+    sum(trials_with_baseoutcome$baseoutcomeadj == 1, na.rm = TRUE),
+    NA,
+    sum(trials_with_rzvars$rzvarsused == 1, na.rm = TRUE),
+    NA,
+    sum(data_cleaned$adjprespec == 1, na.rm = TRUE),
+    sum(data_cleaned$adjprespec == 0, na.rm = TRUE),
+    sum(data_cleaned$adjprespec == -999 | is.na(data_cleaned$adjprespec), na.rm = TRUE),
+    NA,
+    sum(data_cleaned$adjcovartype___1 == 1 & 
+          (data_cleaned$adjcovartype___2 != 1 | is.na(data_cleaned$adjcovartype___2)), 
+        na.rm = TRUE),
+    sum(data_cleaned$adjcovartype___2 == 1 & 
+          (data_cleaned$adjcovartype___1 != 1 | is.na(data_cleaned$adjcovartype___1)), 
+        na.rm = TRUE),
+    sum(data_cleaned$adjcovartype___1 == 1 & data_cleaned$adjcovartype___2 == 1, 
+        na.rm = TRUE),
+    sum((data_cleaned$adjcovartype___1 == 0 | is.na(data_cleaned$adjcovartype___1)) & 
+          (data_cleaned$adjcovartype___2 == 0 | is.na(data_cleaned$adjcovartype___2)), 
+        na.rm = TRUE)
+  ),
+  
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    N = case_when(
+      review_item == "Trial report includes an adjusted analysis" ~ nrow(data_cleaned),
+      review_item == "  - Among trials reporting baseline outcome" ~ nrow(trials_with_baseoutcome),
+      review_item == "  - Among trials using covariates in randomization" ~ nrow(trials_with_rzvars),
+      review_item %in% c("  - Pre-specified a priori", "  - Post-hoc", "  - Unclear/not reported") ~ nrow(trials_with_adj),
+      review_item %in% c("  - Cluster-level only", "  - Individual-level only", 
+                          "  - Both cluster- and individual-level", "  - Unclear") ~ nrow(trials_with_adj),
+      TRUE ~ NA_real_
+    ),
+    `%` = if_else(is.na(N) | is.na(n), "", sprintf("%.1f%%", (n / N) * 100)),
+    `n/N` = if_else(is.na(N) | is.na(n), "", paste0(n, "/", N))
+  ) %>%
+  select(review_item, `n/N`, `%`)
+
+# Create gt table
+table4_gt <- table4_data %>%
+  gt() %>%
+  tab_header(
+    title = "Table 4. Covariate Adjustment in Analysis of Primary Outcome",
+    subtitle = paste("Based on", nrow(data_cleaned), "cluster randomized trials")
+  ) %>%
+  cols_label(
+    review_item = "Review item",
+    `n/N` = "n/N",
+    `%` = "%"
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(everything())
+  ) %>%
+  tab_style(
+    style = cell_text(style = "italic"),
+    locations = cells_body(rows = c(2, 4, 6, 11))
+  ) %>%
+  tab_options(
+    table.font.size = "small",
+    heading.title.font.size = "medium"
+  )
+
+table4_gt
+```
+
+This table assesses whether and how covariates are incorporated into the primary analysis. It asks a question: are researchers adjusting for covariates appropriately, and are they transparent about how they chose which covariates to include?
